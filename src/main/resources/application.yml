@@ -4,14 +4,20 @@ server:
 spring:
   application:
     name: book-service
+
+  # 本地开发配置（数据库密码）放在 application-local.yml，该文件已被 .gitignore 排除。
+  # optional: 前缀表示文件不存在也不报错，方便别人 clone 后直接启动（只是连不上库）。
+  config:
+    import: optional:file:./application-local.yml
+
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     # allowPublicKeyRetrieval=true：MySQL 8+ 默认 caching_sha2_password，不加这个会报 Public Key Retrieval is not allowed
     # rewriteBatchedStatements=true：批量插入时把多条 INSERT 合并成一条，性能提升明显
     url: jdbc:mysql://127.0.0.1:3306/book_db?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true
     username: root
-    # 密码走环境变量，不要把真实密码提交到仓库
-    password: ${DB_PASSWORD:[本地密码]}
+    # 密码不写进仓库。取值优先级：环境变量 DB_PASSWORD > application-local.yml > 空
+    password: ${DB_PASSWORD:}
     hikari:
       maximum-pool-size: 10
       minimum-idle: 2

@@ -2,7 +2,7 @@
 
 一个从课程实验演进而来的 Java 后端项目。
 
-**起点**：《Java 程序设计》课程实验六 —— 原生 JDBC + Derby 嵌入式库 + JSP，216 行，只实现了「查列表 + 新增」。
+**起点**：《Java 程序设计》课程实验六 —— 原生 JDBC + Derby 嵌入式库 + JSP，216 行，只实现了「查列表 + 新增」。  
 **现状**：Spring Boot 4.1 + MyBatis-Plus + MySQL 8，分层架构，统一返回体与异常处理，分页查询。
 
 保留完整 Git 提交历史，可以看到它是怎么一步步改过来的，而不是一次性生成的。
@@ -11,28 +11,28 @@
 
 ## 技术栈
 
-| 层次 | 选型 | 版本 |
-|---|---|---|
-| 语言 | Java | 25 (LTS) |
-| 框架 | Spring Boot | 4.1.2 |
-| ORM | MyBatis-Plus | 3.5.18 |
-| 数据库 | MySQL | 9.3 |
-| 构建 | Maven | 3.9.6（wrapper） |
-| 测试 | JUnit 5 | Boot 托管 |
+| 层次  | 选型           | 版本             |
+| --- | ------------ | -------------- |
+| 语言  | Java         | 25 (LTS)       |
+| 框架  | Spring Boot  | 4.1.2          |
+| ORM | MyBatis-Plus | 3.5.18         |
+| 数据库 | MySQL        | 9.3            |
+| 构建  | Maven        | 3.9.6（wrapper） |
+| 测试  | JUnit 5      | Boot 托管        |
 
 ---
 
 ## 接口
 
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/api/books?page=1&size=10&keyword=Java` | 分页 + 书名/作者模糊搜索 |
-| GET | `/api/books/{id}` | 详情 |
-| POST | `/api/books` | 新增（含参数校验） |
-| GET | `/api/books/ping` | 连通性自检，不依赖数据库 |
-| POST | `/api/borrows` | 借书，`{"bookId":1,"userId":100}` |
-| POST | `/api/borrows/return` | 还书，`{"recordId":1,"userId":100}` |
-| GET | `/api/borrows?userId=100` | 查询某人当前借出未还的记录 |
+| 方法   | 路径                                       | 说明                               |
+| ---- | ---------------------------------------- | -------------------------------- |
+| GET  | `/api/books?page=1&size=10&keyword=Java` | 分页 + 书名/作者模糊搜索                   |
+| GET  | `/api/books/{id}`                        | 详情                               |
+| POST | `/api/books`                             | 新增（含参数校验）                        |
+| GET  | `/api/books/ping`                        | 连通性自检，不依赖数据库                     |
+| POST | `/api/borrows`                           | 借书，`{"bookId":1,"userId":100}`   |
+| POST | `/api/borrows/return`                    | 还书，`{"recordId":1,"userId":100}` |
+| GET  | `/api/borrows?userId=100`                | 查询某人当前借出未还的记录                    |
 
 ### 示例
 
@@ -123,19 +123,19 @@ export DB_PASSWORD=你的密码
 
 **book**（图书）
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | BIGINT PK AUTO_INCREMENT | 主键 |
-| isbn | VARCHAR(20) UNIQUE | 唯一索引，防重复录入 |
-| name / author | VARCHAR | 各建普通索引，列表页模糊查询用 |
-| price | DECIMAL(10,2) | **不用 double**，金额浮点会丢精度 |
-| total_stock | INT | 总库存 |
-| available_stock | INT | 可借库存，并发扣减改这个字段 |
-| version | INT | 乐观锁版本号 |
+| 字段              | 类型                       | 说明                     |
+| --------------- | ------------------------ | ---------------------- |
+| id              | BIGINT PK AUTO_INCREMENT | 主键                     |
+| isbn            | VARCHAR(20) UNIQUE       | 唯一索引，防重复录入             |
+| name / author   | VARCHAR                  | 各建普通索引，列表页模糊查询用        |
+| price           | DECIMAL(10,2)            | **不用 double**，金额浮点会丢精度 |
+| total_stock     | INT                      | 总库存                    |
+| available_stock | INT                      | 可借库存，并发扣减改这个字段         |
+| version         | INT                      | 乐观锁版本号                 |
 
 **borrow_record**（借阅记录）
 
-`idx_user_status(user_id, status)` 支持「某人当前借了哪些书」，
+`idx_user_status(user_id, status)` 支持「某人当前借了哪些书」，  
 `idx_book_status(book_id, status)` 支持「某本书被谁借着」。
 
 ---
@@ -245,14 +245,14 @@ P50 只从 139ms 变成 148ms，几乎没变 —— 说明**瓶颈不在行锁**
 
 ### 服务端真实吞吐（ab，长连接复用）
 
-| 接口 | 并发 | 吞吐量 | P50 | P99 |
-|---|---|---|---|---|
-| `GET /api/books/ping`（不碰数据库） | 100 | **13,840** 请求/秒 | 7ms | 15ms |
-| `GET /api/books?page=1&size=10`（一次数据库查询） | 100 | **1,409** 请求/秒 | 57ms | 156ms |
+| 接口                                       | 并发  | 吞吐量             | P50  | P99   |
+| ---------------------------------------- | --- | --------------- | ---- | ----- |
+| `GET /api/books/ping`（不碰数据库）             | 100 | **13,840** 请求/秒 | 7ms  | 15ms  |
+| `GET /api/books?page=1&size=10`（一次数据库查询） | 100 | **1,409** 请求/秒  | 57ms | 156ms |
 
 **只加一次数据库查询，吞吐量掉到 1/10 —— 数据库是瓶颈，不是框架。**
 
-> 借书接口的 719 QPS 是客户端限制，不是服务端上限。要测准需用 wrk 配合 Lua 脚本动态生成请求体。
+> 借书接口的 719 QPS 是客户端限制，不是服务端上限。要测准需用 wrk 配合 Lua 脚本动态生成请求体。  
 
 ---
 
@@ -270,7 +270,7 @@ public Book(int bookId, String bookName, double bookPrice,
 }
 ```
 
-测试数据里传了「李四」「王五」，入库后作者全是「李思怡」。
+测试数据里传了「李四」「王五」，入库后作者全是「李思怡」。  
 编译器不报错（未使用参数不是错误），IDE 最多把参数名标灰。
 
 **教训**：方法入参要么用掉，要么删掉，不留着不用。
@@ -283,7 +283,7 @@ System.out.println("查询到 " + bookList.size() + " 本图书");  // 此时 li
 while (rs.next()) { ... bookList.add(book); }
 ```
 
-控制台永远显示「查询到 0 本」，但下面明明列出了 3 本。
+控制台永远显示「查询到 0 本」，但下面明明列出了 3 本。  
 这个 bug 会把排查方向带偏 —— 你会以为是 SQL 错了或数据库没数据。
 
 **教训**：日志要打在状态变更之后。日志位置错了比没有日志更危险。
@@ -297,21 +297,21 @@ int rows = pstmt.executeUpdate();   // 又建了一次，DDL 返回 0
 System.out.println("插入了 " + rows + " 条数据");   // 永远打印 0
 ```
 
-`executeUpdate()` 的返回值是「受影响行数」，DML 返回行数，**DDL 返回 0**。
+`executeUpdate()` 的返回值是「受影响行数」，DML 返回行数，**DDL 返回 0**。  
 而且第一个 `PreparedStatement` 被直接覆盖，没有 close，泄漏了。
 
 **教训**：建表是 DDL，不该出现在业务方法里，应由初始化脚本负责。
 
 ### 其他 6 处
 
-| 问题 | 现在怎么处理 |
-|---|---|
-| `getConnection()` 吞异常返回 null，下游 NPE 掩盖真实原因 | 交给 HikariCP + Spring 事务管理，异常正常上抛 |
-| 无连接池，插 3 条数据建 3 次物理连接 | HikariCP 连接池（maximum-pool-size=10） |
-| `book_id` 手工指定无自增，重跑必主键冲突 | `IdType.AUTO` |
-| 金额用 `double` | `DECIMAL(10,2)` + `BigDecimal` |
-| Derby 用相对路径 `jdbc:derby:bookDB;create=true`，换目录就是另一个库 | MySQL + 固定 JDBC URL |
-| `pom.xml` 缺 Derby 依赖，换台机器只靠 pom 跑不起来 | 依赖完整，`./mvnw test` 可直接验证 |
+| 问题                                                    | 现在怎么处理                             |
+| ----------------------------------------------------- | ---------------------------------- |
+| `getConnection()` 吞异常返回 null，下游 NPE 掩盖真实原因            | 交给 HikariCP + Spring 事务管理，异常正常上抛   |
+| 无连接池，插 3 条数据建 3 次物理连接                                 | HikariCP 连接池（maximum-pool-size=10） |
+| `book_id` 手工指定无自增，重跑必主键冲突                             | `IdType.AUTO`                      |
+| 金额用 `double`                                          | `DECIMAL(10,2)` + `BigDecimal`     |
+| Derby 用相对路径 `jdbc:derby:bookDB;create=true`，换目录就是另一个库 | MySQL + 固定 JDBC URL                |
+| `pom.xml` 缺 Derby 依赖，换台机器只靠 pom 跑不起来                  | 依赖完整，`./mvnw test` 可直接验证           |
 
 ---
 
