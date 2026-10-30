@@ -30,6 +30,9 @@
 | GET | `/api/books/{id}` | 详情 |
 | POST | `/api/books` | 新增（含参数校验） |
 | GET | `/api/books/ping` | 连通性自检，不依赖数据库 |
+| POST | `/api/borrows` | 借书，`{"bookId":1,"userId":100}` |
+| POST | `/api/borrows/return` | 还书，`{"recordId":1,"userId":100}` |
+| GET | `/api/borrows?userId=100` | 查询某人当前借出未还的记录 |
 
 ### 示例
 
@@ -67,13 +70,13 @@ curl "http://localhost:8080/api/books?page=1&size=2&keyword=Java"
 ```
 src/main/java/com/siaali/book/
 ├── BookServiceApplication.java   启动类
-├── controller/                   BookController
+├── controller/                   BookController、BorrowController
 ├── service/                      接口
-│   └── impl/                     BookServiceImpl
-├── mapper/                       BookMapper（继承 BaseMapper + 手写 CAS 扣库存）
-├── entity/                       Book（对应 book 表）
-├── dto/                          BookCreateDTO（入参）、PageResult（出参）
-├── common/                       Result、BizException、GlobalExceptionHandler
+│   └── impl/                     BookServiceImpl、BorrowServiceImpl
+├── mapper/                       BookMapper、BorrowRecordMapper（继承 BaseMapper + 手写条件更新 SQL）
+├── entity/                       Book、BorrowRecord
+├── dto/                          BookCreateDTO、BorrowCreateDTO、ReturnDTO、PageResult
+├── common/                       Result、BizException、GlobalExceptionHandler、BorrowStatus
 └── config/                       MybatisPlusConfig（分页插件）
 src/main/resources/
 ├── application.yml
@@ -134,6 +137,80 @@ export DB_PASSWORD=你的密码
 
 `idx_user_status(user_id, status)` 支持「某人当前借了哪些书」，
 `idx_book_status(book_id, status)` 支持「某本书被谁借着」。
+
+---
+
+## 并发控制：库存扣减与幂等
+
+### 问题一：超卖
+
+「先查库存，判断大于 0，再更新」是课程实验里的常规写法，但它在并发下会超卖：
+
+```java
+Book book = bookMapper.selectById(bookId);
+if (book.getAvailableStock() > 0) {          // ① 两个线程都读到 1
+    book.setAvailableStock(book.getAvailableStock() - 1);
+    bookMapper.updateById(book);             // ② 都写入 0
+}
+```
+
+查和改之间有间隙，这被称为**检查后使用（Check-Then-Act）竞态**。库存 1 本，两个人同时借，都判断「够借」，结果借出 2 本。
+
+**解法：把判断条件写进 UPDATE，让数据库原子执行。**
+
+```sql
+UPDATE book SET available_stock = available_stock - 1, version = version + 1
+WHERE id = ? AND available_stock > 0
+```
+
+MySQL 执行 UPDATE 时对该行加排他锁，两个语句自动排队。第二个执行时 `available_stock` 已是 0，WHERE 不匹配，影响 0 行。应用层据此返回「库存不足」。
+
+### 为什么不用 version 乐观锁
+
+`version` 乐观锁适用于「**先读出来 → 在内存里计算 → 再写回去**」的场景（比如用户在页面上修改图书信息）。
+
+而库存扣减是「**在数据库里直接做减法**」，`SET available_stock = available_stock - 1` 这条语句本身就在数据库内部完成了读-算-写，中间不会被打断。再叠一个 `version` 属于重复保护，只会多一次失败重试的可能。
+
+### 问题二：重复归还
+
+用户手抖点两次「还书」，或网络超时前端重试，库存会被加 2 次。
+
+**解法：把状态判断写进 WHERE。**
+
+```sql
+UPDATE borrow_record SET status = 1, return_time = ?
+WHERE id = ? AND user_id = ? AND status = 0
+```
+
+第一次 `status = 0` 匹配，影响 1 行，库存 +1。第二次 `status` 已是 1，影响 0 行，库存不动。这叫**幂等（idempotent）**。
+
+同时 `user_id` 条件防止了**水平越权**：A 用户拿到 B 用户的 `recordId` 也无法替别人还书。
+
+### 问题三：事务边界
+
+借书要同时改两张表（扣库存、写记录），必须原子。事务加在 **Service 层**，因为只有 Service 知道这个业务动作涉及几张表。
+
+```java
+@Transactional(rollbackFor = Exception.class)
+public Long borrow(BorrowCreateDTO dto) { ... }
+```
+
+`rollbackFor = Exception.class` 必须写：Spring 默认只对 `RuntimeException` 回滚，受检异常会照常提交，导致数据只写一半。
+
+### 怎么验证事务真的生效
+
+不是「跑通了就算对」，而是主动构造失败路径：
+
+```bash
+# 1. 记录库存（假设为 5）
+# 2. 把借阅记录表改名，让「插入记录」必然失败
+mysql -e "RENAME TABLE borrow_record TO borrow_record_tmp;"
+# 3. 调借书接口 → 返回 500
+# 4. 查库存 → 仍是 5（第一步的扣减被回滚了）
+mysql -e "RENAME TABLE borrow_record_tmp TO borrow_record;"
+```
+
+如果不写 `@Transactional`，第 4 步会看到库存变成 4 而记录不存在 —— 这本书就「消失」了。
 
 ---
 
@@ -207,7 +284,9 @@ System.out.println("插入了 " + rows + " 条数据");   // 永远打印 0
 
 ## 后续计划
 
-- [ ] 借阅 / 归还接口，库存基于 `UPDATE ... WHERE available_stock > 0` 做 CAS 扣减
-- [ ] JMeter 200 并发压测，验证零超卖
-- [ ] Redis 缓存图书详情，空值缓存 + 随机 TTL 防穿透/雪崩
+- [x] 借阅 / 归还接口，库存基于 `UPDATE ... WHERE available_stock > 0` 做 CAS 扣减
+- [x] 事务原子性验证（构造失败路径，确认库存回滚）
+- [ ] 并发压测，验证零超卖（200 并发借同一本书）
 - [ ] 借阅记录查询（按用户 / 按图书）
+- [ ] Redis 缓存图书详情，空值缓存 + 随机 TTL 防穿透/雪崩
+- [ ] 逾期未还的定时任务扫描
