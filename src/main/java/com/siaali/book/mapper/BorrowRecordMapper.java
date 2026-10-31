@@ -7,6 +7,7 @@ import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * 借阅记录数据访问层。
@@ -62,4 +63,35 @@ public interface BorrowRecordMapper extends BaseMapper<BorrowRecord> {
      */
     @Select("SELECT COUNT(*) FROM borrow_record WHERE user_id = #{userId} AND book_id = #{bookId} AND status = 0")
     int countActiveBorrow(@Param("userId") Long userId, @Param("bookId") Long bookId);
+
+    /**
+     * 深分页：跳过 offset 条，取 size 条（LIMIT offset, size）。
+     *
+     * 【为什么慢】
+     * MySQL 拿到 LIMIT 99990, 10 之后的执行方式不是"跳到第 99991 条"，
+     * 而是"从头读，读一条丢一条，数到 99990 之后才开始返回"。
+     * offset 越大，白读的行越多，代价线性增长。
+     *
+     * 【为什么用 @Select 手写 SQL，不用 MyBatis-Plus 的 selectPage】
+     * 因为这次实验的目的就是观察 LIMIT offset, size 这个具体写法的性能。
+     * 用框架包一层，就看不清楚它到底生成了什么 SQL。
+     */
+    @Select("SELECT * FROM borrow_record ORDER BY id DESC LIMIT #{offset}, #{size}")
+    List<BorrowRecord> pageByOffset(@Param("offset") long offset, @Param("size") int size);
+
+    /**
+     * 游标分页：只取 id 比 lastId 更小的记录（WHERE id < lastId）。
+     *
+     * 【和上面那条的本质区别】
+     *   offset 方式告诉数据库"跳过多少条" → 数据库必须真的数过去
+     *   游标方式告诉数据库"从哪个位置开始" → 数据库用 B+ 树直接定位
+     *   前者代价随页码增长，后者恒定。
+     *
+     * 【代价】
+     *   只能"下一页"，不能跳到第 N 页；
+     *   要求排序字段唯一且有序（这里用主键 id，天然满足）。
+     *   所以它适合信息流、无限下拉，不适合带页码导航的后台列表。
+     */
+    @Select("SELECT * FROM borrow_record WHERE id < #{lastId} ORDER BY id DESC LIMIT #{size}")
+    List<BorrowRecord> pageByCursor(@Param("lastId") long lastId, @Param("size") int size);
 }

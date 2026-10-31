@@ -181,4 +181,14 @@ public class BorrowServiceImpl implements BorrowService {
                 .orderByDesc(BorrowRecord::getBorrowTime);
         return borrowRecordMapper.selectList(wrapper);
     }
+
+    @Override
+    public List<BorrowRecord> pageByOffset(long offset, int size) {
+        return borrowRecordMapper.pageByOffset(offset, size);
+    }
+
+    @Override
+    public List<BorrowRecord> pageByCursor(long lastId, int size) {
+        return borrowRecordMapper.pageByCursor(lastId, size);
+    }
 }

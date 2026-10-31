@@ -72,4 +72,32 @@ public class BorrowController {
     public Result<List<BorrowRecord>> listActive(@RequestParam Long userId) {
         return Result.ok(borrowService.listActiveByUser(userId));
     }
+
+    /**
+     * 管理员视角：全站借阅流水，页码分页（LIMIT offset, size）。
+     * GET /api/borrows/stream?page=1&size=10
+     *
+     * page=1 时 offset=0，page=10000 时 offset=99990。
+     * 同样的 SQL、同样的数据量，只是 offset 不同，耗时能差几十倍 —— 这就是深分页。
+     */
+    @GetMapping("/stream")
+    public Result<List<BorrowRecord>> streamByOffset(@RequestParam(defaultValue = "1") long page,
+                                                     @RequestParam(defaultValue = "10") int size) {
+        long offset = (page - 1) * size;
+        return Result.ok(borrowService.pageByOffset(offset, size));
+    }
+
+    /**
+     * 管理员视角：全站借阅流水，游标分页（WHERE id < lastId）。
+     * GET /api/borrows/stream/cursor?size=10
+     * GET /api/borrows/stream/cursor?lastId=99990&size=10
+     *
+     * 第一页不传 lastId，后端用 Long.MAX_VALUE 兜底，等价于"从最大 id 开始"。
+     */
+    @GetMapping("/stream/cursor")
+    public Result<List<BorrowRecord>> streamByCursor(@RequestParam(required = false) Long lastId,
+                                                     @RequestParam(defaultValue = "10") int size) {
+        long cursor = (lastId == null) ? Long.MAX_VALUE : lastId;
+        return Result.ok(borrowService.pageByCursor(cursor, size));
+    }
 }
