@@ -47,3 +47,6 @@ derby.log
 
 ### 本地配置（含数据库密码，绝不提交）###
 application-local.yml
+
+### 个人学习笔记（自己看的，不公开）###
+docs/
