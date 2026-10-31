@@ -19,18 +19,31 @@ import java.util.List;
 public interface BorrowRecordMapper extends BaseMapper<BorrowRecord> {
 
     /**
-     * 归还：把记录状态从「借出中」改为「已归还」，并写入归还时间。
+     * 归还：把记录状态从「未归还」改为「已归还」，并写入归还时间。
      *
-     * 【为什么 WHERE 里要带 status = 0】
+     * 【为什么 WHERE 里要带状态条件】
      *   这就是「幂等（idempotent）」的实现方式。
      *   幂等的意思是：同一个操作执行一次和执行十次，结果一样。
      *
      *   假设用户手抖点了两次"还书"，或者网络超时前端重试了一次：
-     *     - 第 1 次：status=0 → 改成 1，影响 1 行，库存 +1
+     *     - 第 1 次：status 是 0 或 2 → 改成 1，影响 1 行，库存 +1
      *     - 第 2 次：status 已经是 1，WHERE 不匹配，影响 0 行，库存不动
      *
      *   如果不带这个条件，第 2 次会把已经还过的记录再"还"一次，库存被刷高，
      *   结果就是「书架上明明只有 5 本，系统显示 6 本」。
+     *
+     * 【为什么是 status IN (0, 2)，不是 status = 0】
+     *   这是加逾期状态时踩的第三个坑，也是最隐蔽的一个 ——
+     *   因为前两个坑在 Java 代码里，肉眼能看到 if，而这个坑藏在 SQL 字符串里。
+     *
+     *   逾期记录 status = 2，如果这里写 status = 0：
+     *     应用层放行了（第 2 处的修改），SQL 这里却 WHERE 不匹配，
+     *     影响 0 行，代码抛 409「归还失败，该记录状态已变更」。
+     *     用户看到的是"刷新重试"，重试一百次也一样，书永远还不掉。
+     *
+     *   IN (0, 2) 的意思是：借出中 和 逾期 都允许归还。
+     *   注意它和"已归还(1)"的边界 —— 1 不在列表里，所以重复归还依然被拦住，
+     *   幂等性没有丢。
      *
      * 【为什么不用「先 select 查状态，再 update」】
      *   查和改之间有时间间隙（哪怕只有几毫秒），两个请求可能同时查到 status=0，
@@ -40,15 +53,25 @@ public interface BorrowRecordMapper extends BaseMapper<BorrowRecord> {
      * @return 影响行数。1 = 归还成功；0 = 记录不存在 / 不是你的记录 / 已经还过了
      */
     @Update("UPDATE borrow_record SET status = 1, return_time = #{returnTime} " +
-            "WHERE id = #{recordId} AND user_id = #{userId} AND status = 0")
+            "WHERE id = #{recordId} AND user_id = #{userId} AND status IN (0, 2)")
     int markReturned(@Param("recordId") Long recordId,
                      @Param("userId") Long userId,
                      @Param("returnTime") LocalDateTime returnTime);
-
+    /**
+     * 把「已过应还时间但仍未归还」的记录标记为逾期（status 0 → 2）。
+     */
+    @Update("UPDATE borrow_record SET status = 2 WHERE status = 0 AND due_time < #{now}")
+    int markOverdue(@Param("now") LocalDateTime now);
     /**
      * 统计某用户对某本书「当前未归还」的借阅数量。
      *
      * 用途：拦截"同一个人重复借同一本书"（业务上不合理，一个人不需要借两本一样的书）。
+     *
+     * 【同样是 status IN (0, 2)，不是 status = 0】
+     *   逾期(2) 也是"还没还"的一种。如果这里只写 status = 0，
+     *   用户逾期之后，countActiveBorrow 返回 0，系统认为他没借过这本书，
+     *   于是允许他再借一本 —— 结果一个人手上拿着两本同一本书，
+     *   其中一本永远逾期，另一本正常计时。这是很典型的"新增状态漏改判断"。
      *
      * 【这个方法是「非原子」的，有并发漏洞 —— 必须知道这一点】
      *   两个请求同时进来，都查到这个 count = 0，都判断"没借过"，都插入成功，
@@ -61,7 +84,7 @@ public interface BorrowRecordMapper extends BaseMapper<BorrowRecord> {
      *   本版本保留这个应用层校验，是因为它能覆盖 99% 的真实场景（用户不会恶意并发），
      *   而数据库唯一约束需要额外设计字段，留给后续迭代。
      */
-    @Select("SELECT COUNT(*) FROM borrow_record WHERE user_id = #{userId} AND book_id = #{bookId} AND status = 0")
+    @Select("SELECT COUNT(*) FROM borrow_record WHERE user_id = #{userId} AND book_id = #{bookId} AND status IN (0, 2)")
     int countActiveBorrow(@Param("userId") Long userId, @Param("bookId") Long bookId);
 
     /**

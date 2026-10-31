@@ -126,7 +126,7 @@ public class BorrowServiceImpl implements BorrowService {
      *
      * 执行顺序：
      *   ① 查记录并校验归属、状态 → 给出准确错误信息
-     *   ② 幂等更新记录状态       → 用 WHERE status = 0 兜底
+     *   ② 幂等更新记录状态       → 用 WHERE status IN (0, 2) 兜底
      *   ③ 库存 +1                → 用 WHERE available_stock < total_stock 兜底
      *
      * 为什么 ① 的校验不能代替 ② 的条件：
@@ -151,7 +151,20 @@ public class BorrowServiceImpl implements BorrowService {
         if (!record.getUserId().equals(userId)) {
             throw new BizException(403, "无权操作他人的借阅记录");
         }
-        if (record.getStatus() != BorrowStatus.BORROWED) {
+        // 【这一行原来写的是 != BORROWED，加逾期状态后成了致命 bug】
+        //   原逻辑：只要状态"不等于借出中"就拒绝 → 逾期记录 status = 2，2 != 0 成立，
+        //          直接抛"该借阅记录已归还"。用户点还书，系统说已经还了，
+        //          可书还在他手上，库存永远回不来。
+        //
+        //   改成"只有已归还才拒绝"，逻辑就对了：
+        //     借出中(0) → 允许还
+        //     逾期(2)   → 允许还（而且这才是最该允许还的情况）
+        //     已归还(1) → 拒绝，防重复提交
+        //
+        // 【这就是「新增状态会破坏已有假设」的典型】
+        //   加状态时，要把全项目所有判断 status 的地方都重新审一遍，
+        //   凡是写成「不等于某个值」的，都要问一句：新状态进来会走到哪个分支？
+        if (record.getStatus() == BorrowStatus.RETURNED) {
             throw new BizException(400, "该借阅记录已归还，请勿重复操作");
         }
 
@@ -173,11 +186,33 @@ public class BorrowServiceImpl implements BorrowService {
         log.info("还书成功 recordId={} userId={} bookId={}", recordId, userId, record.getBookId());
     }
 
+    /**
+     * 查询某用户「当前还没还」的所有记录。
+     *
+     * 【这里踩过一个坑，值得讲】
+     *   最初写的是 .eq(status, BORROWED)，只查 status = 0。
+     *   加了逾期定时任务之后，逾期记录的状态被改成 2，
+     *   于是这本书从用户的「当前借阅」列表里凭空消失了 ——
+     *   书还在他手上，系统里却看不到，用户想还书都找不到入口。
+     *
+     * 【为什么用 in 而不是 ne(RETURNED)】
+     *   两种写法都能查出 0 和 2，但语义不同：
+     *     in(0, 2)      = "我要借出中和逾期这两种"  → 白名单，明确
+     *     ne(1)         = "我除了已归还都要"        → 黑名单，将来再加状态（比如"续借中"=3）
+     *                                                 会被意外包含进来，可能不是你要的
+     *   业务查询优先用白名单，因为新增状态时它会"漏掉"而不是"多查"，
+     *   漏掉能在测试时被发现，多查出来往往是脏数据进了接口，更难排查。
+     *
+     * 【性能上要注意】
+     *   in 之后 status 仍然是等值匹配（MySQL 会把 IN 展开成多个等值条件），
+     *   依然能走 (status, due_time) 或 (user_id, status) 这类联合索引，
+     *   不会因为用了 IN 就退化成全表扫描。
+     */
     @Override
     public List<BorrowRecord> listActiveByUser(Long userId) {
         LambdaQueryWrapper<BorrowRecord> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(BorrowRecord::getUserId, userId)
-                .eq(BorrowRecord::getStatus, BorrowStatus.BORROWED)
+                .in(BorrowRecord::getStatus, BorrowStatus.BORROWED, BorrowStatus.OVERDUE)
                 .orderByDesc(BorrowRecord::getBorrowTime);
         return borrowRecordMapper.selectList(wrapper);
     }

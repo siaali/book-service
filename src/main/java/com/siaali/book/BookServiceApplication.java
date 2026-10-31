@@ -3,6 +3,7 @@ package com.siaali.book;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
  * 图书借阅服务启动类。
@@ -12,6 +13,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
  */
 @SpringBootApplication
 @MapperScan("com.siaali.book.mapper")
+@EnableScheduling
 public class BookServiceApplication {
 
     public static void main(String[] args) {
