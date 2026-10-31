@@ -2,6 +2,19 @@ server:
   port: 8080
 
 spring:
+  data:
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      # 密码留空，本地开发没设密码
+      password:
+      # 连接超时时间：连不上就别傻等
+      timeout: 2000ms
+      lettuce:
+        pool:
+          max-active: 8
+          max-idle: 8
+          min-idle: 2
   application:
     name: book-service
 
@@ -28,7 +41,7 @@ mybatis-plus:
     # 数据库下划线字段 -> Java 驼峰属性（available_stock -> availableStock）
     map-underscore-to-camel-case: true
     # 开发期打印 SQL，上线要关掉（会拖慢性能并泄漏数据）
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+#    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
   global-config:
     banner: false
     db-config:
@@ -36,4 +49,4 @@ mybatis-plus:
 
 logging:
   level:
-    com.siaali.book: debug
+    com.siaali.book: info
